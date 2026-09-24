@@ -19,7 +19,7 @@ export function woodFloor() {
     for (let i = 0; i < 8; i++) {
       for (let j = 0; j < 2; j++) {
         const off = i % 2 ? 128 : 0;
-        c.fillStyle = tones[(i * 3 + j) % tones.length];
+        c.fillStyle = tones[(i * 3 + j) % tones.length]!;
         c.fillRect(i * 64, j * 256 + off - 256, 64, 256);
         c.fillRect(i * 64, j * 256 + off, 64, 256);
       }
