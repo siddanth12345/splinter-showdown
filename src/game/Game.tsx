@@ -2,7 +2,7 @@ import { Canvas } from "@react-three/fiber";
 import { Environment, Lightformer } from "@react-three/drei";
 import { useEffect, useState } from "react";
 import { World } from "./World";
-import { G, MAG, SHIELD_CD, DASH_CD, resetGame } from "./state";
+import { G, MAG, PARRY_CD, DASH_CD, resetGame } from "./state";
 
 function Bar({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
@@ -28,7 +28,7 @@ function HUD() {
   return (
     <div className="pointer-events-none fixed inset-0 z-10 select-none font-mono text-hud">
       {G.hurtFlash > 0 && <div className="absolute inset-0 bg-destructive/25" />}
-      {G.shield > 0 && <div className="absolute inset-0 shadow-[inset_0_0_120px_var(--shield)]" />}
+      {(G.buff > 0 || G.parryFlash > 0) && <div className="absolute inset-0 shadow-[inset_0_0_120px_var(--shield)]" />}
       {G.scoped && playing && <div className="absolute inset-0 bg-[radial-gradient(circle,transparent_32%,var(--scope)_34%)]" />}
 
       {/* crosshair */}
@@ -51,13 +51,19 @@ function HUD() {
       <div className="absolute bottom-6 left-6 space-y-3 rounded bg-hud-panel p-3">
         <Bar label="Your Health" value={G.playerHp} tone="crosshair" />
         <div className="flex gap-4 text-xs font-bold uppercase tracking-widest">
-          <span className={G.shield > 0 ? "text-shield" : ""}>
-            [E] Shield {G.shield > 0 ? `${G.shield.toFixed(1)}s` : G.shieldCd > 0 ? `${(G.shieldCd).toFixed(1)}` : "ready"}
+          <span className={G.buff > 0 ? "text-shield" : ""}>
+            [E] Parry {G.buff > 0 ? `POWER ${G.buff.toFixed(1)}s` : G.parryCd > 0 ? G.parryCd.toFixed(1) : "ready"}
           </span>
           <span>[Q] Dash {G.dashCd > 0 ? G.dashCd.toFixed(1) : "ready"}</span>
         </div>
+        <div className="flex gap-4 text-xs font-bold uppercase tracking-widest">
+          <span>Air jumps {G.airJumps}</span>
+          <span>Air dashes {G.airDashes}</span>
+          <span>{Math.round(G.speed)} u/s</span>
+          {G.wallrun && <span className="text-shield">Wallrun</span>}
+        </div>
         <div className="h-1 w-64 bg-hud-track">
-          <div className="h-full bg-shield" style={{ width: `${(1 - G.shieldCd / SHIELD_CD) * 100}%` }} />
+          <div className="h-full bg-shield" style={{ width: `${(1 - G.parryCd / PARRY_CD) * 100}%` }} />
         </div>
         <div className="h-1 w-64 bg-hud-track">
           <div className="h-full bg-hud" style={{ width: `${(1 - G.dashCd / DASH_CD) * 100}%` }} />
@@ -99,7 +105,8 @@ function Menu() {
         <ul className="mt-5 space-y-1 text-left text-sm">
           <li><b>WASD</b> move · <b>Mouse</b> look</li>
           <li><b>Left click</b> shoot (24 splinters / 5s) · <b>Right click</b> scope</li>
-          <li><b>Q</b> dash · <b>E</b> shield (4s) · <b>R</b> reload</li>
+          <li><b>Space</b> jump (3 total) · hold to bunny hop / wallrun</li>
+          <li><b>Q</b> dash (4 in air) · <b>E</b> parry · <b>R</b> reload</li>
         </ul>
         <button
           id="play-btn"
@@ -119,20 +126,21 @@ function Menu() {
 export function Game() {
   return (
     <div className="fixed inset-0 bg-black">
-      <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 3.2, 12], fov: 72, near: 0.1 }}>
+      <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 3.2, 12], fov: 72, near: 0.1, far: 3000 }}>
         <color attach="background" args={["#e8dcc4"]} />
-        <fog attach="fog" args={["#e8dcc4", 40, 90]} />
-        <ambientLight intensity={0.45} color="#ffe8c8" />
+        <fog attach="fog" args={["#e8dcc4", 250, 1400]} />
+        <ambientLight intensity={0.7} color="#ffe8c8" />
         <directionalLight
-          position={[-12, 20, -18]}
+          position={[-120, 500, -180]}
           intensity={1.8}
           color="#fff2d8"
           castShadow
           shadow-mapSize={[2048, 2048]}
-          shadow-camera-left={-32}
-          shadow-camera-right={32}
-          shadow-camera-top={25}
-          shadow-camera-bottom={-25}
+          shadow-camera-left={-320}
+          shadow-camera-right={320}
+          shadow-camera-top={320}
+          shadow-camera-bottom={-320}
+          shadow-camera-far={1500}
         />
         <Environment>
           <Lightformer intensity={1.5} position={[0, 10, 0]} rotation-x={Math.PI / 2} scale={[30, 20, 1]} color="#fff1dc" />
