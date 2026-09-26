@@ -110,10 +110,10 @@ export function Room() {
         <Box key={i} p={[s.x, (s.y0 + s.y1) / 2, s.z]} s={[s.hw * 2, s.y1 - s.y0, s.hd * 2]} c={s.c!} />
       ))}
       {/* fridge details */}
-      {[[-170, -230], [150, 250]].map(([x, z]) => {
-        const face = z! < 0 ? 1 : -1;
+      {([[-170, -230], [150, 250]] as const).map(([x, z]) => {
+        const face = z < 0 ? 1 : -1;
         return (
-          <group key={x} position={[x!, 0, z! + face * 15.3]}>
+          <group key={x} position={[x, 0, z + face * 15.3]}>
             <Box p={[0, 52, 0]} s={[36, 0.6, 0.6]} c="#9aa6ab" />
             <Box p={[12, 65, face * 1]} s={[1.5, 16, 1.5]} c="#7c878c" />
             <Box p={[12, 35, face * 1]} s={[1.5, 24, 1.5]} c="#7c878c" />
