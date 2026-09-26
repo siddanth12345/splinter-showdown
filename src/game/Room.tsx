@@ -1,9 +1,44 @@
 import { useMemo } from "react";
+import * as THREE from "three";
 import { woodFloor, wallpaper, rug } from "./textures";
 
-// Giant cube room: 10x the original floor length, ceiling as tall as the floor is long
-export const ROOM = { w: 600, d: 600, h: 600 };
-const S = 10; // furniture scale
+// Cylinder with same floor area as the old 600x600 room, same ceiling height
+export const ROOM = { r: Math.sqrt((600 * 600) / Math.PI), h: 600 };
+const S = 10;
+
+export type Solid = { x: number; z: number; hw: number; hd: number; y0: number; y1: number; c?: string };
+
+// Collidable, standable, grappleable solids (world units)
+export const SOLIDS: Solid[] = [
+  // sofas (seat + back)
+  { x: 0, z: 170, hw: 50, hd: 20, y0: 0, y1: 23 },
+  { x: 0, z: 186, hw: 50, hd: 5, y0: 0, y1: 46 },
+  { x: -240, z: 0, hw: 20, hd: 50, y0: 0, y1: 23 },
+  { x: -256, z: 0, hw: 5, hd: 50, y0: 0, y1: 46 },
+  // tv stand + tv
+  { x: 0, z: -205, hw: 60, hd: 12.5, y0: 0, y1: 24 },
+  { x: 0, z: -212, hw: 50, hd: 2, y0: 24, y1: 77 },
+  // bookshelf, armchair, plant pot
+  { x: 260, z: -120, hw: 15, hd: 35, y0: 0, y1: 100 },
+  { x: 220, z: 120, hw: 22, hd: 22, y0: 0, y1: 20 },
+  { x: 260, z: 180, hw: 10, hd: 10, y0: 0, y1: 20 },
+  // giant fridges
+  { x: -170, z: -230, hw: 18, hd: 15, y0: 0, y1: 80, c: "#e9eef0" },
+  { x: 150, z: 250, hw: 18, hd: 15, y0: 0, y1: 80, c: "#dfe7ea" },
+  // carpet cavern: raised carpet slab on two carpet flaps, open front/back
+  { x: -150, z: 120, hw: 45, hd: 35, y0: 14, y1: 16, c: "#7a2632" },
+  { x: -194, z: 120, hw: 1, hd: 35, y0: 0, y1: 14, c: "#6a1f2a" },
+  { x: -106, z: 120, hw: 1, hd: 35, y0: 0, y1: 14, c: "#6a1f2a" },
+  // crates
+  { x: 100, z: -120, hw: 12, hd: 12, y0: 0, y1: 24, c: "#a57b4f" },
+  { x: 100, z: -120, hw: 8, hd: 8, y0: 24, y1: 40, c: "#b88c5c" },
+  // book stack
+  { x: -80, z: -120, hw: 20, hd: 14, y0: 0, y1: 10, c: "#2e5a8b" },
+  { x: -80, z: -120, hw: 16, hd: 12, y0: 10, y1: 18, c: "#8b2e2e" },
+  { x: -80, z: -120, hw: 12, hd: 9, y0: 18, y1: 24, c: "#c9a227" },
+  // ottoman
+  { x: 200, z: 0, hw: 18, hd: 18, y0: 0, y1: 14, c: "#5a4a6a" },
+];
 
 function Box({ p, s, c, r = 0 }: { p: [number, number, number]; s: [number, number, number]; c: string; r?: number }) {
   return (
@@ -28,48 +63,38 @@ function Sofa({ p, r = 0 }: { p: [number, number, number]; r?: number }) {
 }
 
 export function Room() {
+  const { r, h } = ROOM;
   const floor = useMemo(() => {
     const t = woodFloor();
-    t.repeat.multiplyScalar(10);
+    t.repeat.multiplyScalar(11);
     return t;
   }, []);
   const wall = useMemo(() => {
     const t = wallpaper();
-    t.repeat.set(t.repeat.x * 10, t.repeat.y * 40);
+    t.repeat.set(420, 120);
     return t;
   }, []);
   const rugT = useMemo(rug, []);
-  const { w, d, h } = ROOM;
   return (
     <group>
       <mesh rotation-x={-Math.PI / 2} receiveShadow>
-        <planeGeometry args={[w, d]} />
+        <circleGeometry args={[r, 96]} />
         <meshStandardMaterial map={floor} roughness={0.6} />
       </mesh>
       <mesh rotation-x={Math.PI / 2} position={[0, h, 0]}>
-        <planeGeometry args={[w, d]} />
+        <circleGeometry args={[r, 96]} />
         <meshStandardMaterial color="#efe6d4" />
       </mesh>
-      {[
-        { p: [0, h / 2, -d / 2] as [number, number, number], r: 0, len: w },
-        { p: [0, h / 2, d / 2] as [number, number, number], r: Math.PI, len: w },
-        { p: [-w / 2, h / 2, 0] as [number, number, number], r: Math.PI / 2, len: d },
-        { p: [w / 2, h / 2, 0] as [number, number, number], r: -Math.PI / 2, len: d },
-      ].map((wl, i) => (
-        <group key={i} position={wl.p} rotation-y={wl.r}>
-          <mesh receiveShadow>
-            <planeGeometry args={[wl.len, h]} />
-            <meshStandardMaterial map={wall} roughness={0.9} />
-          </mesh>
-          <mesh position={[0, -h / 2 + 4, 1]}>
-            <boxGeometry args={[wl.len, 8, 2]} />
-            <meshStandardMaterial color="#f4ede0" />
-          </mesh>
-        </group>
-      ))}
-      {/* windows on back wall */}
-      {[-140, 140].map((x) => (
-        <group key={x} position={[x, 120, -d / 2 + 0.5]} scale={S}>
+      <mesh position={[0, h / 2, 0]} receiveShadow>
+        <cylinderGeometry args={[r, r, h, 128, 1, true]} />
+        <meshStandardMaterial map={wall} roughness={0.9} side={THREE.BackSide} />
+      </mesh>
+      <mesh position={[0, 4, 0]}>
+        <cylinderGeometry args={[r - 1, r - 1, 8, 128, 1, true]} />
+        <meshStandardMaterial color="#f4ede0" side={THREE.BackSide} />
+      </mesh>
+      {[0.6, 2.2, 3.8, 5.3].map((a) => (
+        <group key={a} position={[Math.sin(a) * (r - 1), 120, Math.cos(a) * (r - 1)]} rotation-y={a + Math.PI} scale={S}>
           <mesh>
             <planeGeometry args={[8, 6]} />
             <meshStandardMaterial color="#bfe0f5" emissive="#bfe0f5" emissiveIntensity={0.8} />
@@ -80,7 +105,21 @@ export function Room() {
           <Box p={[5, 0, 0.3]} s={[2, 7.5, 0.3]} c="#9c3b3b" />
         </group>
       ))}
-      {/* furniture, 10x scale */}
+      {/* new props rendered straight from their collision boxes */}
+      {SOLIDS.filter((s) => s.c).map((s, i) => (
+        <Box key={i} p={[s.x, (s.y0 + s.y1) / 2, s.z]} s={[s.hw * 2, s.y1 - s.y0, s.hd * 2]} c={s.c!} />
+      ))}
+      {/* fridge details */}
+      {[[-170, -230], [150, 250]].map(([x, z]) => {
+        const face = z! < 0 ? 1 : -1;
+        return (
+          <group key={x} position={[x!, 0, z! + face * 15.3]}>
+            <Box p={[0, 52, 0]} s={[36, 0.6, 0.6]} c="#9aa6ab" />
+            <Box p={[12, 65, face * 1]} s={[1.5, 16, 1.5]} c="#7c878c" />
+            <Box p={[12, 35, face * 1]} s={[1.5, 24, 1.5]} c="#7c878c" />
+          </group>
+        );
+      })}
       <group scale={S}>
         <mesh rotation-x={-Math.PI / 2} position={[0, 0.005, 0]} receiveShadow>
           <planeGeometry args={[22, 16]} />
@@ -121,13 +160,3 @@ export function Room() {
     </group>
   );
 }
-
-// Axis-aligned obstacles (xz) for simple collision, scaled with furniture
-export const OBSTACLES: { x: number; z: number; hw: number; hd: number }[] = [
-  { x: 0, z: 17, hw: 5, hd: 2 },
-  { x: -24, z: 0, hw: 2, hd: 5 },
-  { x: 0, z: -20.5, hw: 6, hd: 1.3 },
-  { x: 26, z: -12, hw: 1.5, hd: 3.5 },
-  { x: 22, z: 12, hw: 2.2, hd: 2.2 },
-  { x: 26, z: 18, hw: 1, hd: 1 },
-].map((o) => ({ x: o.x * S, z: o.z * S, hw: o.hw * S, hd: o.hd * S }));
