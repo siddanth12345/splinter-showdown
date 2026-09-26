@@ -2,36 +2,41 @@ import { Canvas } from "@react-three/fiber";
 import { Environment, Lightformer } from "@react-three/drei";
 import { useEffect, useState } from "react";
 import { World } from "./World";
-import { G, MAG, PARRY_CD, DASH_CD, resetGame } from "./state";
+import { G, MAG, PARRY_CD, DASH_CD, BOMB_CD, TABLE_CAP, BOSS_HITS, resetGame, lockPointer } from "./state";
 
-function Bar({ label, value, tone }: { label: string; value: number; tone: string }) {
+function useTick(ms: number) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((t) => t + 1), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+}
+
+function Bar({ label, value, max = 100, tone, right }: { label: string; value: number; max?: number; tone: string; right?: string }) {
   return (
     <div className="w-64">
       <div className="mb-1 flex justify-between text-xs font-bold uppercase tracking-widest">
         <span>{label}</span>
-        <span>{Math.ceil(value)}</span>
+        <span>{right ?? Math.ceil(value)}</span>
       </div>
       <div className="h-3 overflow-hidden rounded-sm bg-hud-track">
-        <div className="h-full transition-all" style={{ width: `${value}%`, background: `var(--${tone})` }} />
+        <div className="h-full transition-all" style={{ width: `${(value / max) * 100}%`, background: `var(--${tone})` }} />
       </div>
     </div>
   );
 }
 
 function HUD() {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => tick((t) => t + 1), 50);
-    return () => clearInterval(id);
-  }, []);
+  useTick(50);
   const playing = G.phase === "playing";
+  if (G.phase === "won") return null;
   return (
     <div className="pointer-events-none fixed inset-0 z-10 select-none font-mono text-hud">
       {G.hurtFlash > 0 && <div className="absolute inset-0 bg-destructive/25" />}
+      {G.redFlash > 0 && <div className="absolute inset-0 bg-destructive/40" />}
       {(G.buff > 0 || G.parryFlash > 0) && <div className="absolute inset-0 shadow-[inset_0_0_120px_var(--shield)]" />}
       {G.scoped && playing && <div className="absolute inset-0 bg-[radial-gradient(circle,transparent_32%,var(--scope)_34%)]" />}
 
-      {/* crosshair */}
       {playing && (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           <div className="relative h-8 w-8">
@@ -45,16 +50,34 @@ function HUD() {
         </div>
       )}
 
-      <div className="absolute left-6 top-6 rounded bg-hud-panel p-3">
-        <Bar label="Enemy Table" value={G.botHp} tone="enemy" />
+      <div className="absolute left-6 top-6 space-y-2 rounded bg-hud-panel p-3 text-xs font-bold uppercase tracking-widest">
+        {G.stage === "tables" && (
+          <>
+            <div>Tables alive: {G.alive}{G.capReached ? " — clear them all!" : ` / ${TABLE_CAP}`}</div>
+            <div className="opacity-70">Kills: {G.kills}</div>
+          </>
+        )}
+        {G.stage === "incoming" && <div className="text-destructive">Boss incoming — {Math.ceil(G.bossWarn)}s</div>}
+        {G.stage === "boss" && <Bar label="Boss Table" value={BOSS_HITS - G.bossHits} max={BOSS_HITS} tone="enemy" right={`${BOSS_HITS - G.bossHits} hits`} />}
       </div>
+      {G.stage === "incoming" && (
+        <div className="absolute left-1/2 top-24 -translate-x-1/2 rounded bg-destructive/80 px-6 py-3 text-center text-destructive-foreground">
+          <div className="text-2xl font-black uppercase">Stay away from the center!</div>
+          <div className="mx-auto mt-2 h-2 w-72 bg-hud-track">
+            <div className="h-full bg-destructive-foreground" style={{ width: `${(G.bossWarn / 10) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
       <div className="absolute bottom-6 left-6 space-y-3 rounded bg-hud-panel p-3">
         <Bar label="Your Health" value={G.playerHp} tone="crosshair" />
-        <div className="flex gap-4 text-xs font-bold uppercase tracking-widest">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold uppercase tracking-widest">
           <span className={G.buff > 0 ? "text-shield" : ""}>
-            [E] Parry {G.buff > 0 ? `POWER ${G.buff.toFixed(1)}s` : G.parryCd > 0 ? G.parryCd.toFixed(1) : "ready"}
+            [E] Parry {G.buff > 0 ? `POWER ${G.buff.toFixed(1)}s` : G.parryWin > 0 ? "ACTIVE" : G.parryCd > 0 ? G.parryCd.toFixed(1) : "ready"}
           </span>
           <span>[Q] Dash {G.dashCd > 0 ? G.dashCd.toFixed(1) : "ready"}</span>
+          <span>[F] Bomb {G.bombCd > 0 ? G.bombCd.toFixed(1) : "ready"}</span>
+          <span className={G.grappling ? "text-shield" : ""}>[C] Grapple</span>
         </div>
         <div className="flex gap-4 text-xs font-bold uppercase tracking-widest">
           <span>Air jumps {G.airJumps}</span>
@@ -68,56 +91,100 @@ function HUD() {
         <div className="h-1 w-64 bg-hud-track">
           <div className="h-full bg-hud" style={{ width: `${(1 - G.dashCd / DASH_CD) * 100}%` }} />
         </div>
+        <div className="h-1 w-64 bg-hud-track">
+          <div className="h-full bg-enemy" style={{ width: `${Math.min(1, 1 - G.bombCd / BOMB_CD) * 100}%` }} />
+        </div>
       </div>
       <div className="absolute bottom-6 right-6 rounded bg-hud-panel p-3 text-right">
         <div className="text-xs uppercase tracking-widest opacity-70">Splinters</div>
         <div className="text-4xl font-black">
-          {G.reloading > 0 ? "RELOADING" : `${G.ammo} / ${MAG}`}
+          {G.buff > 0 ? "∞" : G.reloading > 0 ? "RELOADING" : `${G.ammo} / ${MAG}`}
         </div>
       </div>
     </div>
   );
 }
 
+function start(restart: boolean) {
+  if (restart || G.phase !== "playing") resetGame();
+  lockPointer();
+}
+
 function Menu() {
-  const [phase, setPhase] = useState(G.phase);
-  const [locked, setLocked] = useState(false);
-  useEffect(() => {
-    const id = setInterval(() => setPhase(G.phase), 100);
-    const onLock = () => setLocked(!!document.pointerLockElement);
-    document.addEventListener("pointerlockchange", onLock);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("pointerlockchange", onLock);
-    };
-  }, []);
-  if (phase === "playing" && locked) return null;
-  const title =
-    phase === "won" ? "Table Destroyed!" : phase === "lost" ? "You Got Splintered" : phase === "playing" ? "Paused" : "Table Wars";
-  const btn = phase === "playing" ? "Resume" : phase === "menu" ? "Play" : "Play Again";
+  useTick(100);
+  const phase = G.phase;
+  if (phase === "won" || (phase === "playing" && G.locked)) return null;
+  const paused = phase === "playing";
+  const title = phase === "lost" ? "You Got Splintered" : paused ? "Paused" : "Table Wars";
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-hud-scrim font-mono text-hud">
-      <div className="max-w-md rounded-lg border-2 border-hud/30 bg-hud-panel p-8 text-center">
+      <div className="max-w-lg rounded-lg border-2 border-hud/30 bg-hud-panel p-8 text-center">
         <h1 className="text-5xl font-black tracking-tight">{title}</h1>
         <p className="mt-3 text-sm opacity-80">
-          Blast the living table with splinters. Every hit shrinks it — and makes it faster.
+          Every table you break brings two more — up to 30. Clear them all, then survive the red boss.
         </p>
         <ul className="mt-5 space-y-1 text-left text-sm">
-          <li><b>WASD</b> move · <b>Mouse</b> look</li>
-          <li><b>Left click</b> shoot (24 splinters / 5s) · <b>Right click</b> scope</li>
-          <li><b>Space</b> jump (3 total) · hold to bunny hop / wallrun</li>
-          <li><b>Q</b> dash (4 in air) · <b>E</b> parry · <b>R</b> reload</li>
+          <li><b>WASD</b> move · <b>Mouse</b> look · <b>Space</b> jump ×3 / hold to hop or wallrun</li>
+          <li><b>Left click</b> shoot · <b>Right click</b> scope · <b>R</b> reload</li>
+          <li><b>Q</b> dash · <b>E</b> parry · <b>F</b> bomb · hold <b>C</b> grapple</li>
         </ul>
-        <button
-          id="play-btn"
-          className="pointer-events-auto mt-6 rounded bg-crosshair px-8 py-3 text-lg font-black uppercase text-hud-ink"
-          onClick={() => {
-            if (G.phase !== "playing") resetGame();
-            setPhase(G.phase);
-          }}
-        >
-          {btn}
-        </button>
+        <div className="mt-6 flex justify-center gap-3">
+          <button
+            className="pointer-events-auto rounded bg-crosshair px-8 py-3 text-lg font-black uppercase text-hud-ink"
+            onClick={() => start(false)}
+          >
+            {paused ? "Resume" : phase === "menu" ? "Play" : "Play Again"}
+          </button>
+          {paused && (
+            <button
+              className="pointer-events-auto rounded border-2 border-hud/40 px-8 py-3 text-lg font-black uppercase"
+              onClick={() => start(true)}
+            >
+              Restart
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WinScreen() {
+  useTick(200);
+  if (G.phase !== "won") return null;
+  const acc = G.shots ? (G.hits / G.shots) * 100 : 0;
+  const m = Math.floor(G.time / 60), s = Math.floor(G.time % 60);
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-hud-scrim font-mono text-hud">
+      <div className="flex max-w-3xl items-center gap-10 rounded-lg border-2 border-hud/30 bg-hud-panel p-10">
+        <div className="flex h-56 w-56 items-end justify-center">
+          <div className="animate-bounce">
+            <div className="relative h-8 w-40 rounded-sm bg-[var(--enemy)]">
+              <div className="absolute left-8 top-1.5 h-4 w-4 rounded-full bg-hud"><div className="ml-1.5 mt-1.5 h-2 w-2 rounded-full bg-hud-ink" /></div>
+              <div className="absolute right-8 top-1.5 h-4 w-4 rounded-full bg-hud"><div className="ml-1.5 mt-1.5 h-2 w-2 rounded-full bg-hud-ink" /></div>
+            </div>
+            <div className="flex justify-between px-3">
+              <div className="h-16 w-3 bg-[var(--enemy)]" />
+              <div className="h-16 w-3 bg-[var(--enemy)]" />
+            </div>
+          </div>
+        </div>
+        <div className="min-w-64">
+          <h1 className="text-5xl font-black tracking-tight">Victory!</h1>
+          <p className="mt-2 text-sm opacity-80">All 30 tables and the red boss are splinters.</p>
+          <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-2 text-lg">
+            <dt className="opacity-70">Bullets shot</dt><dd className="text-right font-black">{G.shots}</dd>
+            <dt className="opacity-70">Bullets hit</dt><dd className="text-right font-black">{G.hits}</dd>
+            <dt className="opacity-70">Accuracy</dt><dd className="text-right font-black">{acc.toFixed(1)}%</dd>
+            <dt className="opacity-70">Time taken</dt><dd className="text-right font-black">{m}:{s.toString().padStart(2, "0")}</dd>
+          </dl>
+          <button
+            className="pointer-events-auto mt-8 rounded bg-crosshair px-8 py-3 text-lg font-black uppercase text-hud-ink"
+            onClick={() => start(true)}
+          >
+            Play Again
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -136,10 +203,10 @@ export function Game() {
           color="#fff2d8"
           castShadow
           shadow-mapSize={[2048, 2048]}
-          shadow-camera-left={-320}
-          shadow-camera-right={320}
-          shadow-camera-top={320}
-          shadow-camera-bottom={-320}
+          shadow-camera-left={-360}
+          shadow-camera-right={360}
+          shadow-camera-top={360}
+          shadow-camera-bottom={-360}
           shadow-camera-far={1500}
         />
         <Environment>
@@ -150,6 +217,7 @@ export function Game() {
       </Canvas>
       <HUD />
       <Menu />
+      <WinScreen />
     </div>
   );
 }
