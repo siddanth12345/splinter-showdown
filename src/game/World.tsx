@@ -26,12 +26,16 @@ const BOT_BULLET_SPEED = 45 * 10;
 const BOT_BULLET_HALF = 0.35;
 const TABLE_S = 1.5;
 const TABLE_W = 6 * TABLE_S;
-const BOMB_R = TABLE_W * 6;
+const BOMB_R = TABLE_W * 12;
+const AOE_R = TABLE_W * 6;
 const BOMB_DMG = 20;
 const GRAPPLE_MAX = ROOM.r / 4;
 const GRAPPLE_K = 45;
-const BOSS_S = 6;
-const BOSS_ZONE = 45;
+const BOSS_S = 12;
+const BOSS_ZONE = 60;
+const BLUE_N = 16;
+const BLUE_SPEED = 80;
+const BLUE_HP = 10;
 const BOSS_BULLET_DMG = 10;
 const BIG_DMG = 50;
 const AOE_DMG = 30;
@@ -186,6 +190,10 @@ export function World() {
   const bomb = useRef({ alive: false, pos: new THREE.Vector3(), vel: new THREE.Vector3() });
   const booms = useMemo(() => Array.from({ length: 4 }, () => ({ t: 0, pos: new THREE.Vector3(), r: BOMB_R })), []);
   const hazards = useMemo<Hazard[]>(() => Array.from({ length: 8 }, () => ({ active: false, kind: "aoe", t: 0, total: 1, fx: 0, x: 0, z: 0, a0: 0 })), []);
+  const blues = useMemo(() => Array.from({ length: BLUE_N }, () => ({ alive: false, pos: new THREE.Vector3(), dash: new THREE.Vector3(), hp: BLUE_HP, hitCd: 0, dashT: 8, yaw: 0 })), []);
+  const blueT = useRef(6);
+  const blueTop = useRef<THREE.InstancedMesh>(null);
+  const blueLeg = useRef<THREE.InstancedMesh>(null);
   const boss = useRef({ landed: false, y: ROOM.h, vy: 0, pos: new THREE.Vector3(), bulletT: 1, specialT: 2, next: "quarter" as "quarter" | "sword", aoeT: 5, yaw: 0 });
 
   const topI = useRef<THREE.InstancedMesh>(null);
@@ -253,6 +261,7 @@ export function World() {
     if (G.capReached && aliveCount() === 0 && G.stage === "tables") {
       G.stage = "incoming";
       G.bossWarn = BOSS_WARN;
+      G.playerHp = 100;
     }
   };
   const hitBoss = (n: number) => {
@@ -274,7 +283,8 @@ export function World() {
   const explode = (at: THREE.Vector3) => {
     const buffed = G.buff > 0;
     for (const t of tables) if (t.alive && t.pos.distanceTo(at) < BOMB_R) hitTable(t, BOMB_DMG * (buffed ? 2 : 1));
-    if (bossLive() && tmpV.set(boss.current.pos.x, boss.current.y + 10, boss.current.pos.z).distanceTo(at) < BOMB_R + 15)
+    for (const u of blues) if (u.alive && u.pos.distanceTo(at) < BOMB_R) { u.alive = false; burst(tmpV.copy(u.pos).setY(4), TABLE_S, 5); }
+    if (bossLive() && tmpV.set(boss.current.pos.x, boss.current.y + 10, boss.current.pos.z).distanceTo(at) < BOMB_R + 30)
       hitBoss((BOMB_DMG / DMG) * (buffed ? 2 : 1));
     const bm = booms.find((x) => x.t <= 0) ?? booms[0]!;
     bm.t = 0.5;
@@ -409,6 +419,8 @@ export function World() {
       playerPool.forEach((x) => (x.alive = false));
       botPool.forEach((x) => (x.alive = false));
       tables.forEach((t) => (t.alive = false));
+      blues.forEach((u) => (u.alive = false));
+      blueT.current = 6;
       hazards.forEach((h) => (h.active = false));
       splinters.length = 0;
       bomb.current.alive = false;
@@ -658,18 +670,52 @@ export function World() {
           b.specialT -= dt;
           if (b.specialT <= 0) {
             b.specialT = 2;
-            if (b.next === "quarter") addHazard("quarter", 0, 0, 1.5);
+            if (b.next === "quarter") addHazard("quarter", 0, 0, 2.5);
             else {
               const rp = recentPos.current[0]?.p ?? p;
               addHazard("sword", rp.x, rp.z, 0.5);
             }
             b.next = b.next === "quarter" ? "sword" : "quarter";
           }
+          blueT.current -= dt;
+          if (blueT.current <= 0) {
+            blueT.current = 6;
+            for (let k = 0; k < 2; k++) {
+              const u = blues.find((x) => !x.alive);
+              if (!u) break;
+              Object.assign(u, { alive: true, hp: BLUE_HP, hitCd: 0, dashT: 6 + Math.random() * 8 });
+              u.pos.copy(randomFloor(p));
+              u.dash.set(0, 0, 0);
+            }
+          }
           b.aoeT -= dt;
           if (b.aoeT <= 0) {
             b.aoeT = 7;
             addHazard("aoe", p.x, p.z, 3);
           }
+        }
+      }
+
+      // --- blue chaser tables ---
+      for (const u of blues) {
+        if (!u.alive) continue;
+        const toP = tmpV.set(p.x - u.pos.x, 0, p.z - u.pos.z);
+        const d = toP.length();
+        if (d > 0.1) u.pos.addScaledVector(toP.normalize(), BLUE_SPEED * dt);
+        u.yaw = Math.atan2(p.x - u.pos.x, p.z - u.pos.z);
+        u.dashT -= dt;
+        if (u.dashT <= 0) {
+          u.dashT = 10 + Math.random() * 10;
+          u.dash.set(p.x - u.pos.x, 0, p.z - u.pos.z).normalize().multiplyScalar(160);
+        }
+        u.pos.addScaledVector(u.dash, dt);
+        u.dash.multiplyScalar(Math.exp(-3 * dt));
+        for (const s of SOLIDS) if (s.y0 < 5) pushOut(u.pos, s, 3 * TABLE_S);
+        clampCircle(u.pos, 3 * TABLE_S);
+        u.hitCd = Math.max(0, u.hitCd - dt);
+        if (d < 3 * TABLE_S + PLAYER_R + 1 && p.y < 6 && u.hitCd <= 0) {
+          u.hitCd = 0.5;
+          damagePlayer(1);
         }
       }
 
@@ -688,11 +734,11 @@ export function World() {
               if (Math.hypot(p.x - h.x, p.z - h.z) < SWORD_R && p.y < 40) damagePlayer(BIG_DMG);
               G.shake = Math.max(G.shake, 0.4);
             } else {
-              if (Math.hypot(p.x - h.x, p.z - h.z) < BOMB_R) damagePlayer(AOE_DMG);
+              if (Math.hypot(p.x - h.x, p.z - h.z) < AOE_R) damagePlayer(AOE_DMG);
               const bm = booms.find((x) => x.t <= 0) ?? booms[0]!;
               bm.t = 0.5;
               bm.pos.set(h.x, 0, h.z);
-              bm.r = BOMB_R;
+              bm.r = AOE_R;
               G.shake = Math.max(G.shake, 0.6);
             }
           }
@@ -751,11 +797,22 @@ export function World() {
               bossBox(_mn, _mx);
               bossT = segAABB(bl.prev, bl.pos, _mn, _mx);
             }
+            let blueHit: (typeof blues)[number] | null = null;
+            for (const u of blues) {
+              if (!u.alive) continue;
+              const tt = segSphere(bl.prev, bl.pos, tmpV.copy(u.pos).setY(2.6 * TABLE_S), 3.4 * TABLE_S);
+              if (tt < bestT) { bestT = tt; bestTable = null; blueHit = u; }
+            }
             if (Math.min(bestT, bossT) < tSolid) {
               bl.alive = false;
               G.hits++;
               if (bossT < bestT) hitBoss(bl.dmg > DMG ? 2 : 1);
               else if (bestTable) hitTable(bestTable, bl.dmg);
+              else if (blueHit) {
+                blueHit.hp -= bl.dmg;
+                G.hitFlash = 0.15;
+                if (blueHit.hp <= 0) { blueHit.alive = false; burst(tmpV.copy(blueHit.pos).setY(4), TABLE_S, 5); }
+              }
             } else if (tSolid < Infinity) bl.alive = false;
           } else {
             const body = tmpV.copy(cam.position).setY(cam.position.y - 1);
@@ -764,7 +821,7 @@ export function World() {
               bl.alive = false;
               if (G.parryWin > 0) {
                 let tgt: THREE.Vector3 | null = null;
-                if (bossLive() && b.landed) tgt = new THREE.Vector3(b.pos.x, b.y + 12, b.pos.z);
+                if (bossLive() && b.landed) tgt = new THREE.Vector3(b.pos.x, b.y + 24, b.pos.z);
                 else {
                   let best = Infinity;
                   for (const t of tables) {
@@ -824,6 +881,27 @@ export function World() {
       eyeI.current.instanceMatrix.needsUpdate = true;
     }
     G.alive = aliveCount();
+    if (blueTop.current && blueLeg.current) {
+      blues.forEach((u, i) => {
+        if (!u.alive) {
+          blueTop.current!.setMatrixAt(i, HIDE);
+          for (let l = 0; l < 4; l++) blueLeg.current!.setMatrixAt(i * 4 + l, HIDE);
+          return;
+        }
+        tmpQ.setFromAxisAngle(UP, u.yaw);
+        tmpM.compose(tmpV.set(u.pos.x, 0, u.pos.z), tmpQ, new THREE.Vector3(TABLE_S, TABLE_S, TABLE_S));
+        blueTop.current!.setMatrixAt(i, tmpM2.multiplyMatrices(tmpM, TOP_M));
+        LEG_M.forEach((m, l) => blueLeg.current!.setMatrixAt(i * 4 + l, tmpM2.multiplyMatrices(tmpM, m)));
+      });
+      blueTop.current.instanceMatrix.needsUpdate = true;
+      blueLeg.current.instanceMatrix.needsUpdate = true;
+    }
+    MAP.px = pos.current.x;
+    MAP.pz = pos.current.z;
+    MAP.yaw = new THREE.Euler().setFromQuaternion(cam.quaternion, "YXZ").y;
+    MAP.boss = G.stage === "boss" && b.landed ? { x: b.pos.x, z: b.pos.z } : null;
+    MAP.tables = tables.flatMap((t) => (t.alive ? [t.pos.x, t.pos.z] : []));
+    MAP.blues = blues.flatMap((u) => (u.alive ? [u.pos.x, u.pos.z] : []));
 
     // --- splinter cones ---
     if (splI.current) {
@@ -878,13 +956,13 @@ export function World() {
       if (r.disc) {
         r.disc.visible = h.active && h.kind !== "quarter";
         r.disc.position.set(h.x, 0.3, h.z);
-        r.disc.scale.setScalar(h.kind === "sword" ? SWORD_R : BOMB_R * (h.t > 0 ? charge : 1));
+        r.disc.scale.setScalar(h.kind === "sword" ? SWORD_R : AOE_R * (h.t > 0 ? charge : 1));
         (r.disc.material as THREE.MeshBasicMaterial).opacity = h.t > 0 ? pulse : 0.7;
       }
       if (r.sector) {
         r.sector.visible = h.active && h.kind === "quarter";
         r.sector.rotation.z = h.a0;
-        (r.sector.material as THREE.MeshBasicMaterial).opacity = h.t > 0 ? pulse * (0.5 + charge) : 0.75;
+        (r.sector.material as THREE.MeshBasicMaterial).opacity = h.t > 0 ? 0.3 + 0.25 * charge : 0.75;
       }
       if (r.sword) {
         r.sword.visible = h.active && h.kind === "sword";
@@ -945,6 +1023,14 @@ export function World() {
       <instancedMesh ref={bInst} args={[undefined, undefined, 320]} frustumCulled={false}>
         <boxGeometry args={[0.7, 0.7, 7]} />
         <meshStandardMaterial color="#5a2e0e" emissive="#c2410c" emissiveIntensity={0.8} />
+      </instancedMesh>
+      <instancedMesh ref={blueTop} args={[undefined, undefined, BLUE_N]} frustumCulled={false} castShadow>
+        <boxGeometry args={[6, 0.5, 4]} />
+        <meshStandardMaterial color="#2f6fd6" emissive="#0a2a66" roughness={0.5} />
+      </instancedMesh>
+      <instancedMesh ref={blueLeg} args={[undefined, undefined, BLUE_N * 4]} frustumCulled={false} castShadow>
+        <boxGeometry args={[0.45, 3, 0.45]} />
+        <meshStandardMaterial color="#1f4fa8" />
       </instancedMesh>
       <mesh ref={bombMesh} visible={false}>
         <sphereGeometry args={[0.8, 16, 12]} />
