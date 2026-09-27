@@ -5,6 +5,7 @@ import * as THREE from "three";
 import {
   G, MAG, FIRE_INTERVAL, DMG, PARRY_WINDOW, PARRY_CD, BUFF_TIME, DASH_CD, AIR_JUMPS, AIR_DASHES,
   BOMB_CD, BOMB_CD_BUFF, TABLE_HP, TABLE_CAP, BOSS_HITS, BOSS_WARN, setLocker,
+  MAP,
 } from "./state";
 import { Room, ROOM, SOLIDS } from "./Room";
 import { tableWood } from "./textures";
