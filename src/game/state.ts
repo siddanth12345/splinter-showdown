@@ -75,3 +75,6 @@ export function lockPointer() {
     /* browser may refuse right after Esc; user can click again */
   }
 }
+
+// Minimap snapshot, written by World each frame, read by the HUD.
+export const MAP = { px: 0, pz: 0, yaw: 0, boss: null as null | { x: number; z: number }, tables: [] as number[], blues: [] as number[] };
