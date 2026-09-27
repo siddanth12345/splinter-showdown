@@ -2,7 +2,8 @@ import { Canvas } from "@react-three/fiber";
 import { Environment, Lightformer } from "@react-three/drei";
 import { useEffect, useState } from "react";
 import { World } from "./World";
-import { G, MAG, PARRY_CD, DASH_CD, BOMB_CD, TABLE_CAP, BOSS_HITS, resetGame, lockPointer } from "./state";
+import { G, MAG, PARRY_CD, DASH_CD, BOMB_CD, TABLE_CAP, BOSS_HITS, resetGame, lockPointer, MAP } from "./state";
+import { ROOM, SOLIDS } from "./Room";
 
 function useTick(ms: number) {
   const [, tick] = useState(0);
@@ -22,6 +23,29 @@ function Bar({ label, value, max = 100, tone, right }: { label: string; value: n
       <div className="h-3 overflow-hidden rounded-sm bg-hud-track">
         <div className="h-full transition-all" style={{ width: `${(value / max) * 100}%`, background: `var(--${tone})` }} />
       </div>
+    </div>
+  );
+}
+
+function MiniMap() {
+  const R = ROOM.r;
+  const dot = (x: number, z: number, c: string, r: number, k: string) => <circle key={k} cx={x} cy={z} r={r} fill={c} stroke="#000" strokeWidth={2} />;
+  const t: React.ReactNode[] = [];
+  for (let i = 0; i < MAP.tables.length; i += 2) t.push(dot(MAP.tables[i]!, MAP.tables[i + 1]!, "#22c55e", 7, "t" + i));
+  for (let i = 0; i < MAP.blues.length; i += 2) t.push(dot(MAP.blues[i]!, MAP.blues[i + 1]!, "#60a5fa", 6, "u" + i));
+  const hx = MAP.px - Math.sin(MAP.yaw) * 30, hz = MAP.pz - Math.cos(MAP.yaw) * 30;
+  return (
+    <div className="absolute right-6 top-6 rounded-full bg-hud-panel p-2">
+      <svg viewBox={`${-R} ${-R} ${2 * R} ${2 * R}`} className="h-52 w-52">
+        <circle cx={0} cy={0} r={R - 2} fill="#e8dcc4" fillOpacity={0.25} stroke="currentColor" strokeWidth={4} />
+        {SOLIDS.map((s, i) => (
+          <rect key={i} x={s.x - s.hw} y={s.z - s.hd} width={s.hw * 2} height={s.hd * 2} fill="#8a6a4a" fillOpacity={0.8} />
+        ))}
+        {t}
+        {MAP.boss && dot(MAP.boss.x, MAP.boss.z, "#ef4444", 16, "boss")}
+        <line x1={MAP.px} y1={MAP.pz} x2={hx} y2={hz} stroke="#1d4ed8" strokeWidth={5} />
+        {dot(MAP.px, MAP.pz, "#1d4ed8", 9, "me")}
+      </svg>
     </div>
   );
 }
@@ -50,6 +74,7 @@ function HUD() {
         </div>
       )}
 
+      <MiniMap />
       <div className="absolute left-6 top-6 space-y-2 rounded bg-hud-panel p-3 text-xs font-bold uppercase tracking-widest">
         {G.stage === "tables" && (
           <>
