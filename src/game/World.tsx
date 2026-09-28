@@ -35,22 +35,25 @@ const GRAPPLE_K = 45;
 const BOSS_S = 12;
 const BOSS_ZONE = 60;
 const BLUE_N = 16;
-const BLUE_SPEED = 80;
+const BLUE_SPEED = 60;
 const BLUE_HP = 10;
 const BOSS_BULLET_DMG = 10;
 const BIG_DMG = 50;
 const AOE_DMG = 30;
 const SWORD_R = 10;
+const SUMMON_HP = 5;
+const PLATE_R = BOSS_S * 3;
+const PLATE_SPEED = 190;
 const R = ROOM.r;
 const UP = new THREE.Vector3(0, 1, 0);
 
 type Bullet = { pos: THREE.Vector3; prev: THREE.Vector3; vel: THREE.Vector3; life: number; alive: boolean; dmg: number };
 type Table = {
   alive: boolean; pos: THREE.Vector3; vy: number; hp: number; target: THREE.Vector3; shootT: number;
-  jumpT: number; jumpsLeft: number; dashT: number; dash: THREE.Vector3; bob: number; s: number; yaw: number;
+  jumpT: number; jumpsLeft: number; dashT: number; dash: THREE.Vector3; bob: number; s: number; yaw: number; summoned: boolean;
 };
 type Splinter = { pos: THREE.Vector3; vel: THREE.Vector3; rot: THREE.Euler; spin: THREE.Vector3; life: number; size: number };
-type Hazard = { active: boolean; kind: "quarter" | "sword" | "aoe"; t: number; total: number; fx: number; x: number; z: number; a0: number };
+type Hazard = { active: boolean; kind: "quarter" | "sword" | "stomp" | "aoe"; t: number; total: number; fx: number; x: number; z: number; a0: number };
 
 const bulletPool = (n: number): Bullet[] =>
   Array.from({ length: n }, () => ({ pos: new THREE.Vector3(), prev: new THREE.Vector3(), vel: new THREE.Vector3(), life: 0, alive: false, dmg: DMG }));
@@ -163,7 +166,7 @@ const HIDE = new THREE.Matrix4().makeScale(0, 0, 0);
 function newTable(): Table {
   return {
     alive: false, pos: new THREE.Vector3(), vy: 0, hp: TABLE_HP, target: new THREE.Vector3(), shootT: 1,
-    jumpT: 2, jumpsLeft: 0, dashT: 3, dash: new THREE.Vector3(), bob: 0, s: TABLE_S, yaw: 0,
+    jumpT: 2, jumpsLeft: 0, dashT: 3, dash: new THREE.Vector3(), bob: 0, s: TABLE_S, yaw: 0, summoned: false,
   };
 }
 
@@ -193,9 +196,11 @@ export function World() {
   const hazards = useMemo<Hazard[]>(() => Array.from({ length: 8 }, () => ({ active: false, kind: "aoe", t: 0, total: 1, fx: 0, x: 0, z: 0, a0: 0 })), []);
   const blues = useMemo(() => Array.from({ length: BLUE_N }, () => ({ alive: false, pos: new THREE.Vector3(), dash: new THREE.Vector3(), hp: BLUE_HP, hitCd: 0, dashT: 8, yaw: 0 })), []);
   const blueT = useRef(6);
+  const summonT = useRef(10);
   const blueTop = useRef<THREE.InstancedMesh>(null);
   const blueLeg = useRef<THREE.InstancedMesh>(null);
-  const boss = useRef({ landed: false, y: ROOM.h, vy: 0, pos: new THREE.Vector3(), bulletT: 1, specialT: 2, next: "quarter" as "quarter" | "sword", aoeT: 5, yaw: 0 });
+  const boss = useRef({ landed: false, y: ROOM.h, vy: 0, pos: new THREE.Vector3(), bulletT: 1, specialT: 2, next: "sword" as "sword" | "stomp", quarterT: 3, aoeT: 5, yaw: 0 });
+  const plate = useRef({ alive: false, pos: new THREE.Vector3(), prev: new THREE.Vector3(), vel: new THREE.Vector3() });
 
   const topI = useRef<THREE.InstancedMesh>(null);
   const legI = useRef<THREE.InstancedMesh>(null);
@@ -204,6 +209,7 @@ export function World() {
   const bInst = useRef<THREE.InstancedMesh>(null);
   const splI = useRef<THREE.InstancedMesh>(null);
   const bombMesh = useRef<THREE.Mesh>(null);
+  const plateRef = useRef<THREE.Mesh>(null);
   const boomRefs = useRef<(THREE.Mesh | null)[]>([]);
   const hazRefs = useRef<({ disc: THREE.Mesh | null; sector: THREE.Mesh | null; sword: THREE.Group | null })[]>(
     Array.from({ length: 8 }, () => ({ disc: null, sector: null, sword: null })),
@@ -215,11 +221,13 @@ export function World() {
   const wood = useMemo(tableWood, []);
 
   const aliveCount = () => tables.reduce((n, t) => n + (t.alive ? 1 : 0), 0);
-  const spawnTable = (at?: THREE.Vector3) => {
+  const spawnTable = (at?: THREE.Vector3, summoned = false) => {
     const t = tables.find((x) => !x.alive);
     if (!t) return;
     Object.assign(t, newTable());
     t.alive = true;
+    t.summoned = summoned;
+    if (summoned) t.hp = SUMMON_HP;
     t.pos.copy(at ?? randomFloor(pos.current));
     t.target.copy(randomFloor(t.pos));
     t.shootT = 1 + Math.random();
@@ -422,10 +430,12 @@ export function World() {
       tables.forEach((t) => (t.alive = false));
       blues.forEach((u) => (u.alive = false));
       blueT.current = 6;
+      summonT.current = 10;
       hazards.forEach((h) => (h.active = false));
       splinters.length = 0;
       bomb.current.alive = false;
-      Object.assign(b, { landed: false, y: ROOM.h, vy: 0, bulletT: 1, specialT: 2, next: "quarter", aoeT: 5 });
+      plate.current.alive = false;
+      Object.assign(b, { landed: false, y: ROOM.h, vy: 0, bulletT: 1, specialT: 2, next: "sword", quarterT: 3, aoeT: 5 });
       b.pos.set(0, 0, 0);
       if (G.phase === "playing") spawnTable(BOT_START);
       else spawnTable(BOT_START.clone());
@@ -594,7 +604,7 @@ export function World() {
       for (const t of tables) {
         if (!t.alive) continue;
         const bp = t.pos;
-        const speed = (5 + (1 - t.hp / TABLE_HP) * 9) * 4;
+        const speed = (5 + (1 - t.hp / (t.summoned ? SUMMON_HP : TABLE_HP)) * 9) * 4;
         const toT = tmpV.copy(t.target).sub(bp).setY(0);
         if (toT.length() < 4) t.target.copy(randomFloor(bp));
         else bp.addScaledVector(toT.normalize(), speed * dt);
@@ -632,7 +642,7 @@ export function World() {
             const aim = cam.position.clone().setY(cam.position.y - 0.5).sub(from).normalize();
             aim.x += (Math.random() - 0.5) * 0.05;
             aim.y += (Math.random() - 0.5) * 0.03;
-            spawnBullet(botPool, from, aim.normalize().multiplyScalar(BOT_BULLET_SPEED), DMG, 2);
+            spawnBullet(botPool, from, aim.normalize().multiplyScalar(t.summoned ? BOT_BULLET_SPEED * 0.5 : BOT_BULLET_SPEED), DMG, t.summoned ? 4 : 2);
           }
         }
       }
@@ -657,10 +667,11 @@ export function World() {
             if (Math.hypot(p.x, p.z) < BOSS_ZONE && p.y < 30) damagePlayer(9999, true);
           }
         } else {
+          const chargingStomp = hazards.some((h) => h.active && h.kind === "stomp" && h.t > 0);
           const toP = tmpV.set(p.x - b.pos.x, 0, p.z - b.pos.z);
-          if (toP.length() > 40) b.pos.addScaledVector(toP.normalize(), 12 * dt);
+          if (!chargingStomp && toP.length() > 40) b.pos.addScaledVector(toP.normalize(), 12 * dt);
           clampCircle(b.pos, 25);
-          b.yaw = Math.atan2(p.x - b.pos.x, p.z - b.pos.z);
+          if (!chargingStomp) b.yaw = Math.atan2(p.x - b.pos.x, p.z - b.pos.z);
           b.bulletT -= dt;
           if (b.bulletT <= 0) {
             b.bulletT = 1;
@@ -670,13 +681,20 @@ export function World() {
           }
           b.specialT -= dt;
           if (b.specialT <= 0) {
-            b.specialT = 2;
-            if (b.next === "quarter") addHazard("quarter", 0, 0, 2.5);
-            else {
+            if (b.next === "sword") {
               const rp = recentPos.current[0]?.p ?? p;
               addHazard("sword", rp.x, rp.z, 0.5);
+              b.specialT = 1.5;
+            } else {
+              addHazard("stomp", b.pos.x, b.pos.z, 1);
+              b.specialT = 2;
             }
-            b.next = b.next === "quarter" ? "sword" : "quarter";
+            b.next = b.next === "sword" ? "stomp" : "sword";
+          }
+          b.quarterT -= dt;
+          if (b.quarterT <= 0) {
+            b.quarterT = 4;
+            addHazard("quarter", 0, 0, 2.5);
           }
           blueT.current -= dt;
           if (blueT.current <= 0) {
@@ -685,8 +703,20 @@ export function World() {
               const u = blues.find((x) => !x.alive);
               if (!u) break;
               Object.assign(u, { alive: true, hp: BLUE_HP, hitCd: 0, dashT: 6 + Math.random() * 8 });
-              u.pos.copy(randomFloor(p));
+              const a = Math.random() * Math.PI * 2;
+              u.pos.set(b.pos.x + Math.cos(a) * (BOSS_S * 4), 0, b.pos.z + Math.sin(a) * (BOSS_S * 4));
+              clampCircle(u.pos, 3 * TABLE_S);
               u.dash.set(0, 0, 0);
+            }
+          }
+          summonT.current -= dt;
+          if (summonT.current <= 0) {
+            summonT.current = 10;
+            for (let k = 0; k < 2; k++) {
+              const a = Math.random() * Math.PI * 2;
+              const at = new THREE.Vector3(b.pos.x + Math.cos(a) * (BOSS_S * 4.5), 0, b.pos.z + Math.sin(a) * (BOSS_S * 4.5));
+              clampCircle(at, 3 * TABLE_S);
+              spawnTable(at, true);
             }
           }
           b.aoeT -= dt;
@@ -716,7 +746,9 @@ export function World() {
         u.hitCd = Math.max(0, u.hitCd - dt);
         if (d < 3 * TABLE_S + PLAYER_R + 1 && p.y < 6 && u.hitCd <= 0) {
           u.hitCd = 0.5;
-          damagePlayer(1);
+          damagePlayer(2);
+          u.alive = false;
+          burst(tmpV.copy(u.pos).setY(4), TABLE_S, 5);
         }
       }
 
@@ -728,12 +760,18 @@ export function World() {
           if (h.t <= 0) {
             h.fx = 0.5;
             if (h.kind === "quarter") {
-              G.redFlash = 0.5;
               const ang = (Math.atan2(-p.z, p.x) - h.a0 + Math.PI * 4) % (Math.PI * 2);
               if (ang <= Math.PI / 2) damagePlayer(BIG_DMG);
             } else if (h.kind === "sword") {
               if (Math.hypot(p.x - h.x, p.z - h.z) < SWORD_R && p.y < 40) damagePlayer(BIG_DMG);
               G.shake = Math.max(G.shake, 0.4);
+            } else if (h.kind === "stomp") {
+              const dir = new THREE.Vector3(Math.sin(b.yaw), 0, Math.cos(b.yaw));
+              plate.current.alive = true;
+              plate.current.pos.set(b.pos.x, PLATE_R, b.pos.z).addScaledVector(dir, PLATE_R + BOSS_S * 3);
+              plate.current.prev.copy(plate.current.pos);
+              plate.current.vel.copy(dir).multiplyScalar(PLATE_SPEED);
+              G.shake = Math.max(G.shake, 0.8);
             } else {
               if (Math.hypot(p.x - h.x, p.z - h.z) < AOE_R) damagePlayer(AOE_DMG);
               const bm = booms.find((x) => x.t <= 0) ?? booms[0]!;
@@ -747,6 +785,20 @@ export function World() {
           h.fx -= dt;
           if (h.fx <= 0) h.active = false;
         }
+      }
+
+      // --- boss stomp plate (continuous collision) ---
+      if (plate.current.alive) {
+        const q = plate.current;
+        q.prev.copy(q.pos);
+        q.pos.addScaledVector(q.vel, dt);
+        const playerBody = tmpV.copy(cam.position).setY(cam.position.y - 1);
+        const hitPlayer = segSphere(q.prev, q.pos, playerBody, PLATE_R + PLAYER_R) < Infinity;
+        const hitWorld = Math.hypot(q.pos.x, q.pos.z) > R - PLATE_R || segSolids(q.prev, q.pos) < Infinity;
+        if (hitPlayer) {
+          damagePlayer(BIG_DMG);
+          q.alive = false;
+        } else if (hitWorld) q.alive = false;
       }
 
       // --- bomb (sub-stepped continuous collision) ---
@@ -955,7 +1007,7 @@ export function World() {
       const charge = h.t > 0 ? 1 - h.t / h.total : 1;
       const pulse = 0.25 + 0.2 * Math.sin(performance.now() / 60);
       if (r.disc) {
-        r.disc.visible = h.active && h.kind !== "quarter";
+        r.disc.visible = h.active && h.kind === "aoe";
         r.disc.position.set(h.x, 0.3, h.z);
         r.disc.scale.setScalar(h.kind === "sword" ? SWORD_R : AOE_R * (h.t > 0 ? charge : 1));
         (r.disc.material as THREE.MeshBasicMaterial).opacity = h.t > 0 ? pulse : 0.7;
@@ -978,6 +1030,13 @@ export function World() {
       bossRef.current.visible = G.stage === "boss" && G.phase !== "won";
       bossRef.current.position.set(b.pos.x, b.y, b.pos.z);
       bossRef.current.rotation.y = b.yaw;
+      const stomp = hazards.find((h) => h.active && h.kind === "stomp" && h.t > 0);
+      bossRef.current.rotation.x = stomp ? -Math.sin((1 - stomp.t / stomp.total) * Math.PI * 0.5) * 0.35 : 0;
+    }
+    if (plateRef.current) {
+      plateRef.current.visible = plate.current.alive;
+      plateRef.current.position.copy(plate.current.pos);
+      plateRef.current.rotation.y = Math.atan2(plate.current.vel.x, plate.current.vel.z);
     }
     if (ropeRef.current) {
       ropeRef.current.visible = G.grappling;
@@ -1054,6 +1113,10 @@ export function World() {
             <meshBasicMaterial color="#ff1a1a" transparent opacity={0.3} depthWrite={false} side={THREE.DoubleSide} />
           </mesh>
           <group ref={(g) => { hazRefs.current[i]!.sword = g; }} visible={false}>
+            <mesh position={[0, ROOM.h / 2, 0]}>
+              <cylinderGeometry args={[2.5, 5, ROOM.h, 16]} />
+              <meshBasicMaterial color="#fff4b8" transparent opacity={0.32} depthWrite={false} />
+            </mesh>
             <mesh position={[0, 22, 0]}>
               <boxGeometry args={[1.2, 40, 6]} />
               <meshStandardMaterial color="#d8dde2" metalness={0.8} roughness={0.25} />
@@ -1094,6 +1157,10 @@ export function World() {
           </mesh>
         ))}
       </group>
+      <mesh ref={plateRef} visible={false} rotation-x={Math.PI / 2} castShadow>
+        <cylinderGeometry args={[PLATE_R, PLATE_R, 2.2, 48]} />
+        <meshStandardMaterial color="#e8edf0" roughness={0.28} metalness={0.18} />
+      </mesh>
       <mesh ref={ropeRef} visible={false}>
         <cylinderGeometry args={[0.05, 0.05, 1, 6]} />
         <meshStandardMaterial color="#e8d9b0" />

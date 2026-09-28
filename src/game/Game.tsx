@@ -1,6 +1,8 @@
 import { Canvas } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import { Environment, Lightformer } from "@react-three/drei";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
 import { World } from "./World";
 import { G, MAG, PARRY_CD, DASH_CD, BOMB_CD, TABLE_CAP, BOSS_HITS, resetGame, lockPointer, MAP } from "./state";
 import { ROOM, SOLIDS } from "./Room";
@@ -35,11 +37,11 @@ function MiniMap() {
   for (let i = 0; i < MAP.blues.length; i += 2) t.push(dot(MAP.blues[i]!, MAP.blues[i + 1]!, "#60a5fa", 6, "u" + i));
   const hx = MAP.px - Math.sin(MAP.yaw) * 30, hz = MAP.pz - Math.cos(MAP.yaw) * 30;
   return (
-    <div className="absolute right-6 top-6 rounded-full bg-hud-panel p-2">
-      <svg viewBox={`${-R} ${-R} ${2 * R} ${2 * R}`} className="h-52 w-52">
+    <div className="absolute right-6 top-6 rounded-full border-2 border-hud/30 bg-hud-panel p-3 shadow-2xl">
+      <svg viewBox={`${-R} ${-R} ${2 * R} ${2 * R}`} className="h-[min(68vh,32rem)] w-[min(68vh,32rem)]">
         <circle cx={0} cy={0} r={R - 2} fill="#e8dcc4" fillOpacity={0.25} stroke="currentColor" strokeWidth={4} />
         {SOLIDS.map((s, i) => (
-          <rect key={i} x={s.x - s.hw} y={s.z - s.hd} width={s.hw * 2} height={s.hd * 2} fill="#8a6a4a" fillOpacity={0.8} />
+          <rect key={i} x={s.x - s.hw} y={s.z - s.hd} width={s.hw * 2} height={s.hd * 2} fill={s.c ?? "#8a6a4a"} fillOpacity={0.88} stroke="#e8dcc4" strokeWidth={1.5} />
         ))}
         {t}
         {MAP.boss && dot(MAP.boss.x, MAP.boss.z, "#ef4444", 16, "boss")}
@@ -174,41 +176,65 @@ function Menu() {
   );
 }
 
+function VictoryTable() {
+  const table = useRef<THREE.Group>(null);
+  useFrame(({ clock }, delta) => {
+    const model = table.current;
+    if (!model) return;
+    model.rotation.y += delta * 0.65;
+    model.position.y = Math.abs(Math.sin(clock.elapsedTime * 2.2)) * 0.8 - 1;
+    model.rotation.z = Math.sin(clock.elapsedTime * 2.2) * 0.08;
+  });
+  return (
+    <group ref={table} scale={0.9}>
+      <mesh position={[0, 1.7, 0]} castShadow><boxGeometry args={[5, 0.55, 3.4]} /><meshStandardMaterial color="#2fa84f" roughness={0.55} /></mesh>
+      {([[-2, 0.6, -1.2], [2, 0.6, -1.2], [-2, 0.6, 1.2], [2, 0.6, 1.2]] as const).map((p, i) => (
+        <mesh key={i} position={p} castShadow><boxGeometry args={[0.45, 2.6, 0.45]} /><meshStandardMaterial color="#197a37" /></mesh>
+      ))}
+      {[-0.85, 0.85].map((x) => (
+        <group key={x} position={[x, 1.8, 1.72]}>
+          <mesh><sphereGeometry args={[0.32, 18, 12]} /><meshStandardMaterial color="#f5f2dc" /></mesh>
+          <mesh position={[0, 0, 0.29]}><sphereGeometry args={[0.12, 12, 8]} /><meshStandardMaterial color="#172117" /></mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
 function WinScreen() {
   useTick(200);
   if (G.phase !== "won") return null;
   const acc = G.shots ? (G.hits / G.shots) * 100 : 0;
   const m = Math.floor(G.time / 60), s = Math.floor(G.time % 60);
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-hud-scrim font-mono text-hud">
-      <div className="flex max-w-3xl items-center gap-10 rounded-lg border-2 border-hud/30 bg-hud-panel p-10">
-        <div className="flex h-56 w-56 items-end justify-center">
-          <div className="animate-bounce">
-            <div className="relative h-8 w-40 rounded-sm bg-[var(--enemy)]">
-              <div className="absolute left-8 top-1.5 h-4 w-4 rounded-full bg-hud"><div className="ml-1.5 mt-1.5 h-2 w-2 rounded-full bg-hud-ink" /></div>
-              <div className="absolute right-8 top-1.5 h-4 w-4 rounded-full bg-hud"><div className="ml-1.5 mt-1.5 h-2 w-2 rounded-full bg-hud-ink" /></div>
-            </div>
-            <div className="flex justify-between px-3">
-              <div className="h-16 w-3 bg-[var(--enemy)]" />
-              <div className="h-16 w-3 bg-[var(--enemy)]" />
-            </div>
-          </div>
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-hud-scrim p-6 font-mono text-hud">
+      <div className="grid w-full max-w-5xl grid-cols-1 overflow-hidden rounded-lg border-2 border-hud/30 bg-hud-panel shadow-2xl md:grid-cols-[0.9fr_1.1fr]">
+        <div className="relative min-h-80 border-b-2 border-hud/20 md:min-h-[34rem] md:border-b-0 md:border-r-2">
+          <div className="absolute left-6 top-6 z-10 text-5xl font-black uppercase">Victory</div>
+          <Canvas shadows camera={{ position: [8, 5, 10], fov: 42 }}>
+            <ambientLight intensity={1.1} />
+            <directionalLight position={[5, 10, 6]} intensity={2.2} castShadow />
+            <VictoryTable />
+            <mesh rotation-x={-Math.PI / 2} position={[0, -1.1, 0]} receiveShadow><circleGeometry args={[7, 48]} /><meshStandardMaterial color="#314438" roughness={1} /></mesh>
+          </Canvas>
+          <div className="absolute bottom-6 left-6 text-sm font-black uppercase tracking-widest text-crosshair">The green table wins</div>
         </div>
-        <div className="min-w-64">
-          <h1 className="text-5xl font-black tracking-tight">Victory!</h1>
-          <p className="mt-2 text-sm opacity-80">All 30 tables and the red boss are splinters.</p>
-          <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-2 text-lg">
-            <dt className="opacity-70">Bullets shot</dt><dd className="text-right font-black">{G.shots}</dd>
-            <dt className="opacity-70">Bullets hit</dt><dd className="text-right font-black">{G.hits}</dd>
-            <dt className="opacity-70">Accuracy</dt><dd className="text-right font-black">{acc.toFixed(1)}%</dd>
-            <dt className="opacity-70">Time taken</dt><dd className="text-right font-black">{m}:{s.toString().padStart(2, "0")}</dd>
+        <div className="flex min-h-[34rem] flex-col justify-center p-8 md:p-12">
+          <div className="mb-8 border-b-2 border-hud/30 pb-3 text-3xl font-black uppercase">Results</div>
+          <dl className="space-y-3 text-lg">
+            {[
+              ["Time", `${m}:${s.toString().padStart(2, "0")}`],
+              ["Bullets shot", G.shots],
+              ["Bullets hit", G.hits],
+              ["Accuracy", `${acc.toFixed(1)}%`],
+              ["Tables defeated", G.kills],
+            ].map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[1fr_auto] items-center border-b border-hud/20 bg-hud-track px-4 py-3">
+                <dt className="font-bold uppercase opacity-75">{label}</dt><dd className="text-2xl font-black">{value}</dd>
+              </div>
+            ))}
           </dl>
-          <button
-            className="pointer-events-auto mt-8 rounded bg-crosshair px-8 py-3 text-lg font-black uppercase text-hud-ink"
-            onClick={() => start(true)}
-          >
-            Play Again
-          </button>
+          <button className="pointer-events-auto mt-8 rounded bg-crosshair px-8 py-3 text-lg font-black uppercase text-hud-ink" onClick={() => start(true)}>Play Again</button>
         </div>
       </div>
     </div>

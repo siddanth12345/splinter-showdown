@@ -1,4 +1,4 @@
-export const MAG = 24;
+export const MAG = 40;
 export const FIRE_INTERVAL = 5 / 24; // 24 splinters in 5s
 export const DMG = 5;
 export const PARRY_WINDOW = 1;
